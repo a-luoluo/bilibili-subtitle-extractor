@@ -1,0 +1,145 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>B站字幕提取器</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    background: #fff;
+    color: #222;
+    padding: 14px;
+    min-height: 100vh;
+  }
+  .header { text-align: center; margin-bottom: 10px; }
+  .header h1 { font-size: 17px; color: #fb7299; margin-bottom: 2px; }
+  .header .sub { font-size: 11px; color: #999; }
+  .toolbar { display: flex; gap: 6px; margin-bottom: 8px; }
+  .btn-refresh { background: #fff; border: 1px solid #00a1d6; color: #00a1d6; border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 12px; transition: all 0.2s; }
+  .btn-refresh:hover { background: #00a1d6; color: #fff; }
+  .card { background: #f6f7f8; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
+  .card-title { font-size: 12px; font-weight: bold; color: #00a1d6; margin-bottom: 5px; }
+  .video-info { font-size: 11px; line-height: 1.6; color: #555; word-break: break-all; }
+  .video-info .label { color: #999; }
+  .video-info .val { color: #222; }
+
+  .page-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; max-height: 100px; overflow-y: auto; }
+  .page-item { background: #fff; border: 1px solid #ddd; color: #666; border-radius: 4px; padding: 3px 6px; cursor: pointer; font-size: 10px; transition: all 0.2s; max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .page-item:hover { border-color: #00a1d6; color: #00a1d6; }
+  .page-item.active { border-color: #00a1d6; color: #fff; background: #00a1d6; }
+
+  .sub-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+  .sub-item { background: #fff; border: 1px solid #00a1d6; color: #00a1d6; border-radius: 6px; padding: 5px 10px; cursor: pointer; font-size: 11px; transition: all 0.2s; }
+  .sub-item:hover { background: #00a1d6; color: #fff; }
+  .sub-item.active { background: #00a1d6; color: #fff; }
+  .sub-item.ai { border-color: #fb7299; color: #fb7299; }
+  .sub-item.ai:hover { background: #fb7299; color: #fff; }
+  .sub-item.ai.active { background: #fb7299; color: #fff; }
+  .sub-item.music { border-color: #ccc; color: #aaa; }
+  .sub-item.music.active { background: #ccc; color: #fff; }
+  .ai-badge { display: inline-block; background: #fb7299; color: #fff; font-size: 8px; padding: 1px 4px; border-radius: 3px; margin-left: 3px; font-weight: bold; }
+  .music-badge { display: inline-block; background: #999; color: #fff; font-size: 8px; padding: 1px 4px; border-radius: 3px; margin-left: 3px; }
+
+  .format-chooser { display: flex; gap: 6px; margin-top: 4px; }
+  .format-btn { flex: 1; background: #fff; border: 1px solid #ddd; color: #999; border-radius: 6px; padding: 6px; cursor: pointer; font-size: 11px; text-align: center; transition: all 0.2s; }
+  .format-btn:hover { border-color: #00a1d6; color: #00a1d6; }
+  .format-btn.active { border-color: #00a1d6; color: #fff; background: #00a1d6; }
+
+  .btn-row { display: flex; gap: 8px; margin-top: 4px; }
+  .btn { flex: 1; border: none; border-radius: 8px; padding: 10px; font-size: 13px; font-weight: bold; cursor: pointer; transition: all 0.2s; }
+  .btn-download { background: #00a1d6; color: #fff; }
+  .btn-download:hover { opacity: 0.9; }
+  .btn-download:disabled { background: #ddd; color: #aaa; cursor: not-allowed; }
+  .btn-read { background: #fb7299; color: #fff; }
+  .btn-read:hover { opacity: 0.9; }
+  .btn-read:disabled { background: #ddd; color: #aaa; cursor: not-allowed; }
+
+  .status { text-align: center; font-size: 11px; margin-top: 6px; padding: 6px; border-radius: 6px; display: none; }
+  .status.success { background: #e8f5e9; color: #2e7d32; display: block; }
+  .status.error { background: #fce4ec; color: #c62828; display: block; }
+  .status.info { background: #e3f2fd; color: #1565c0; display: block; }
+
+  .preview-label { display: none; font-size: 11px; color: #fb7299; margin-top: 4px; font-weight: bold; text-align: center; }
+  .preview { background: #fff; border: 1px solid #e8e8e8; border-radius: 8px; padding: 8px; max-height: 200px; overflow-y: auto; font-size: 10px; line-height: 1.5; display: none; margin-top: 6px; }
+  .preview.show { display: block; }
+  .preview-item { padding: 2px 0; border-bottom: 1px solid #f0f0f0; }
+  .preview-item .time { color: #00a1d6; margin-right: 6px; }
+  .preview-item .text { color: #333; }
+  .debug-log { font-family: Consolas, monospace; font-size: 9px; color: #aaa; margin-top: 4px; max-height: 60px; overflow-y: auto; display: none; }
+  .debug-log.show { display: block; }
+
+  .reader-overlay { display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: #fff; z-index: 10; flex-direction: column; }
+  .reader-header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: #f6f7f8; border-bottom: 1px solid #e8e8e8; position: sticky; top: 0; z-index: 2; }
+  .reader-back { background: #fff; border: 1px solid #00a1d6; color: #00a1d6; border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 12px; white-space: nowrap; transition: all 0.2s; }
+  .reader-back:hover { background: #00a1d6; color: #fff; }
+  .reader-title { flex: 1; font-size: 13px; font-weight: bold; color: #222; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .reader-body { flex: 1; overflow-y: auto; padding: 16px 18px; font-size: 14px; line-height: 2; color: #333; }
+  .read-para { margin-bottom: 2px; text-indent: 2em; }
+  .read-time { display: inline-block; color: #fb7299; font-size: 11px; margin-right: 8px; font-family: Consolas, monospace; min-width: 38px; cursor: pointer; transition: all 0.15s; padding: 1px 4px; border-radius: 3px; }
+  .read-time:hover { background: #fb7299; color: #fff; transform: scale(1.1); }
+  .reader-body::-webkit-scrollbar { width: 6px; }
+  .reader-body::-webkit-scrollbar-thumb { background: #ddd; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div id="mainUI">
+  <div class="header">
+    <h1>🎬 B站字幕提取器</h1>
+    <div class="sub">CC字幕 / AI语音识别 · 阅读模式</div>
+  </div>
+
+  <div class="toolbar">
+    <button class="btn-refresh" id="refreshBtn">🔄 重新检测</button>
+    <span style="flex:1;font-size:10px;color:#fb7299;line-height:2;text-align:right"><b>AI</b>=语音识别 · <b>📖</b>=阅读</span>
+  </div>
+
+  <div class="card" id="videoCard">
+    <div class="card-title">📺 当前视频</div>
+    <div class="video-info" id="videoInfo">
+      <div style="text-align:center;padding:20px;color:#999">请打开 B站视频后点🔄</div>
+    </div>
+  </div>
+
+  <div class="card" id="pageCard" style="display:none">
+    <div class="card-title">📑 切换分P</div>
+    <div class="page-list" id="pageList"></div>
+  </div>
+
+  <div class="card" id="subCard" style="display:none">
+    <div class="card-title">📝 可选字幕</div>
+    <div class="sub-list" id="subList"></div>
+  </div>
+
+  <div class="card" id="formatCard" style="display:none">
+    <div class="card-title">📄 导出格式（下载用）</div>
+    <div class="format-chooser">
+      <div class="format-btn active" data-format="srt">SRT</div>
+      <div class="format-btn" data-format="txt">TXT</div>
+      <div class="format-btn" data-format="json">JSON</div>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-read" id="readBtn" disabled>📖 开始阅读</button>
+    <button class="btn btn-download" id="extractBtn" disabled>⬇ 下载</button>
+  </div>
+
+  <div class="status" id="status"></div>
+  <div class="preview-label" id="previewLabel">👁 前3句预览 — 不对就点 🔄 刷新</div>
+  <div class="preview" id="preview"></div>
+  <div class="debug-log" id="debug"></div>
+</div>
+
+<div class="reader-overlay" id="reader" style="display:none">
+  <div class="reader-header">
+    <button class="reader-back" id="readerBack">← 返回</button>
+    <div class="reader-title" id="readerTitle"></div>
+  </div>
+  <div class="reader-body" id="readerContent"></div>
+</div>
+
+<script src="sidepanel.js"></script>
+</body>
+</html>

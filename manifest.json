@@ -1,0 +1,34 @@
+﻿{
+  "manifest_version": 3,
+  "name": "B站字幕提取器",
+  "version": "6.5",
+  "description": "一键提取哔哩哔哩视频字幕，支持阅读模式和时间戳跳转",
+  "permissions": ["activeTab", "downloads", "scripting", "sidePanel", "tabs"],
+  "host_permissions": ["https://*.bilibili.com/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://*.bilibili.com/*"],
+      "js": ["capture.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "B站字幕提取器",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
