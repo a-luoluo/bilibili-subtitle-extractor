@@ -1,4 +1,4 @@
-﻿# B站字幕提取器 (Bilibili Subtitle Extractor)
+﻿# 浏览器B站字幕提取器 (Bilibili Subtitle Extractor)
 
 一键提取哔哩哔哩视频字幕的 Chrome 浏览器扩展，支持阅读模式和时间戳跳转。
 
@@ -12,7 +12,7 @@
 ## 📦 安装
 
 1. 下载本仓库代码或 `git clone`
-2. 打开 Chrome，进入 `chrome://extensions/`
+2. 打开 edge或Chrome，进入设置或 `chrome://extensions/`
 3. 开启右上角「开发者模式」
 4. 点击「加载已解压的扩展程序」
 5. 选择本仓库文件夹
