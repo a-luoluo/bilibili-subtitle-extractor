@@ -1,120 +1,72 @@
-// Capture subtitle metadata that the normal Bilibili player loads in this tab.
-(function(){
-  const store=new Map();
+// ISOLATED world: keep the cache and extension APIs out of the page's world.
+(() => {
+  const store = new Map();
+  const MAX_ENTRIES = 30;
+  const MAX_AGE = 10 * 60 * 1000;
+  const validBvid = value => typeof value === 'string' && /^BV[a-zA-Z0-9]{10}$/.test(value);
+  const validCid = value => /^[1-9]\d{0,19}$/.test(String(value || ''));
 
-  function parseVideoInfo(url){
-    try{
-      const u=new URL(url,location.href);
-      const bvid=(u.href.match(/BV[a-zA-Z0-9]+/)||[])[0]||(location.href.match(/BV[a-zA-Z0-9]+/)||[])[0]||'';
-      const cid=u.searchParams.get('cid')||'';
-      return{bvid,cid};
-    }catch(e){
-      return{bvid:(location.href.match(/BV[a-zA-Z0-9]+/)||[])[0]||'',cid:''};
-    }
+  function subtitleURL(value) {
+    if (typeof value !== 'string' || value.length > 8192) return '';
+    try {
+      const url = new URL(value.startsWith('//') ? 'https:' + value : value);
+      const host = url.hostname;
+      if (url.protocol !== 'https:' || url.username || url.password || url.port) return '';
+      if (!(host === 'bilibili.com' || host.endsWith('.bilibili.com') || host === 'hdslb.com' || host.endsWith('.hdslb.com'))) return '';
+      return url.href;
+    } catch (_) { return ''; }
   }
 
-  function cleanUrl(u){
-    if(!u||typeof u!=='string')return '';
-    return u.startsWith('//')?'https:'+u:u;
+  function normalize(raw) {
+    if (!Array.isArray(raw)) return [];
+    return raw.slice(0, 100).flatMap(item => {
+      if (!item || typeof item !== 'object') return [];
+      const url = subtitleURL(item.subtitle_url || item.url);
+      if (!url) return [];
+      const lan = typeof item.lan === 'string' ? item.lan.slice(0, 50) : '';
+      const lanDoc = typeof item.lan_doc === 'string' ? item.lan_doc.slice(0, 100) : '';
+      const id = typeof item.id === 'string' || typeof item.id === 'number' ? String(item.id).slice(0, 50) : '';
+      if (!lan && !lanDoc && !id) return [];
+      return [{ id, lan, lan_doc: lanDoc, subtitle_url: url }];
+    });
   }
 
-  function normalize(raw){
-    return Array.isArray(raw)?raw.filter(s=>s&&(s.subtitle_url||s.url)&&(s.lan||s.lan_doc||s.id)).map(s=>({
-      ...s,
-      subtitle_url:cleanUrl(s.subtitle_url||s.url)
-    })):[];
+  function prune() {
+    const now = Date.now();
+    for (const [key, item] of store) if (now - item.time > MAX_AGE) store.delete(key);
+    while (store.size > MAX_ENTRIES) store.delete(store.keys().next().value);
   }
 
-  function save(detail){
-    const raw=normalize(detail&&detail.raw);
-    if(!raw.length)return;
-    const info=parseVideoInfo(detail.url||location.href);
-    const key=(info.bvid||'')+':'+(info.cid||'');
-    store.set(key,{raw,source:detail.source||'capture',time:Date.now(),url:detail.url||''});
-    if(info.bvid)store.set(info.bvid+':',store.get(key));
-  }
-
-  window.addEventListener('bse-subtitle-capture',e=>save(e.detail));
-
-  chrome.runtime.onMessage.addListener((msg,sender,sendResponse)=>{
-    if(msg&&msg.action==='bse:getCapturedSubtitles'){
-      const exact=store.get((msg.bvid||'')+':'+(msg.cid||''));
-      const loose=store.get((msg.bvid||'')+':');
-      const item=msg.cid?exact:(exact||loose);
-      sendResponse(item||{raw:[],source:'capture-empty'});
-      return true;
-    }
-    return false;
+  window.addEventListener('bse-subtitle-capture', event => {
+    // Page events are untrusted. Only accept bounded, plain JSON and known hosts.
+    if (typeof event.detail !== 'string' || event.detail.length > 1024 * 1024) return;
+    try {
+      const detail = JSON.parse(event.detail);
+      if (!detail || !validBvid(detail.bvid) || !validCid(detail.cid)) return;
+      const url = new URL(detail.url);
+      if (url.protocol !== 'https:' || url.username || url.password || url.port) return;
+      if (!(url.hostname === 'bilibili.com' || url.hostname.endsWith('.bilibili.com'))) return;
+      if (!['fetch', 'xhr', 'playinfo', 'initial-state'].includes(detail.source)) return;
+      if (detail.source === 'fetch' || detail.source === 'xhr') {
+        if (url.hostname !== 'api.bilibili.com' || !/^\/x\/player\/(?:wbi\/)?v2$/.test(url.pathname)) return;
+        if (url.searchParams.get('cid') !== String(detail.cid)) return;
+        const requestBvid = url.searchParams.get('bvid');
+        if (requestBvid && requestBvid !== detail.bvid) return;
+      }
+      const raw = normalize(detail.raw);
+      if (!raw.length) return;
+      const key = detail.bvid + ':' + detail.cid;
+      store.delete(key);
+      store.set(key, { raw, source: detail.source, time: Date.now(), url: url.href });
+      prune();
+    } catch (_) { /* An unrelated page event must never break the player. */ }
   });
 
-  const script=document.createElement('script');
-  script.textContent=`(()=> {
-    if (window.__bseSubtitleCaptureInstalled) return;
-    window.__bseSubtitleCaptureInstalled = true;
-
-    const dispatch = (url, raw, source) => {
-      if (!Array.isArray(raw) || !raw.length) return;
-      window.dispatchEvent(new CustomEvent('bse-subtitle-capture', { detail: { url, raw, source } }));
-    };
-    const valid = s => s && typeof s === 'object' && (s.subtitle_url || s.url) && (s.lan || s.lan_doc || s.id);
-    const findSubtitleLists = obj => {
-      const out = [];
-      const seen = new WeakSet();
-      const walk = value => {
-        if (!value || typeof value !== 'object') return;
-        if (seen.has(value)) return;
-        seen.add(value);
-        if (Array.isArray(value)) {
-          if (value.some(valid)) out.push(value);
-          for (const item of value) walk(item);
-          return;
-        }
-        for (const key of Object.keys(value)) walk(value[key]);
-      };
-      walk(obj);
-      return out;
-    };
-    const inspectJSON = (url, data, source) => {
-      if (!data || typeof data !== 'object') return;
-      for (const list of findSubtitleLists(data)) dispatch(url, list, source);
-    };
-    const shouldInspect = url => /\\/x\\/player\\//.test(url) || /subtitle/i.test(url);
-
-    const rawFetch = window.fetch;
-    if (typeof rawFetch === 'function') {
-      window.fetch = async function(input, init) {
-        const res = await rawFetch.apply(this, arguments);
-        try {
-          const url = typeof input === 'string' ? input : (input && input.url) || res.url || '';
-          if (shouldInspect(url)) res.clone().json().then(data => inspectJSON(url, data, 'fetch')).catch(() => {});
-        } catch (e) {}
-        return res;
-      };
-    }
-
-    const rawOpen = XMLHttpRequest.prototype.open;
-    const rawSend = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.open = function(method, url) {
-      this.__bseUrl = String(url || '');
-      return rawOpen.apply(this, arguments);
-    };
-    XMLHttpRequest.prototype.send = function() {
-      this.addEventListener('load', function() {
-        try {
-          const url = this.__bseUrl || this.responseURL || '';
-          if (!shouldInspect(url)) return;
-          const text = typeof this.responseText === 'string' ? this.responseText : '';
-          if (text) inspectJSON(url, JSON.parse(text), 'xhr');
-        } catch (e) {}
-      });
-      return rawSend.apply(this, arguments);
-    };
-
-    setTimeout(() => {
-      inspectJSON(location.href, window.__playinfo__, 'playinfo');
-      inspectJSON(location.href, window.__INITIAL_STATE__, 'initial-state');
-    }, 0);
-  })();`;
-  (document.documentElement||document.head).appendChild(script);
-  script.remove();
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (!msg || msg.action !== 'bse:getCapturedSubtitles') return false;
+    prune();
+    const item = validBvid(msg.bvid) && validCid(msg.cid) ? store.get(msg.bvid + ':' + msg.cid) : null;
+    sendResponse(item || { raw: [], source: 'capture-empty' });
+    return false;
+  });
 })();
