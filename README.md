@@ -83,11 +83,11 @@ npm run package
 - `check`：检查运行脚本语法、版本号、Chrome／Safari 两份 manifest 的引用和 ZIP 文件目录／内容。
 - `test`：运行 Node.js 行为回归测试；测试不依赖真实 B 站账号。
 - `package`：生成 Chrome ZIP、Safari 源 ZIP 和 `dist/safari-extension/` 文件夹。
-- `package:safari-app`：提供完整 Xcode 下的 Safari 未签名开发 App 构建入口；当前本机仅有命令行工具，App 编译仍待 CI／完整 Xcode 验证，不是签名／公证发行流程。
+- `package:safari-app`：使用完整 Xcode 构建 Safari 未签名开发 App；已通过 Xcode 26.6 的 CI 编译与资源校验，不是签名／公证发行流程。
 
 打包只包含扩展运行文件、图标与使用文档。文件顺序、时间戳和权限固定，同一份源码产生相同的 ZIP；测试、Git 数据及未使用的旧浮窗代码不进入安装包。
 
-GitHub Actions 会运行检查和测试，分别提供 Chrome 与 Safari 源 ZIP 构建产物，并在 macOS 作业中尝试编译未签名的 Safari 开发 App。该 App 构建尚待 CI 实际验证，成功后也只用于开发测试；不会自动创建 Release。自动化测试不能替代真实视频验证；发布前应分别在 Mac Chrome／Edge 和 Safari 中检查有字幕视频、无字幕视频、登录要求、分 P 切换、语言切换、阅读跳转及三种格式下载。
+GitHub Actions 会运行检查和测试，分别提供 Chrome 与 Safari 源 ZIP 构建产物，并编译未签名的 Safari 开发 App。[提交 `96bd35d` 的 CI 构建](https://github.com/a-luoluo/bilibili-subtitle-extractor/actions/runs/42490811506)已通过：宿主 App 和扩展均包含 arm64／x86_64，8 个运行资源与输入源码逐字节一致。该 App 尚未运行，未签名、未公证，只用于开发测试；不会自动创建 Release。自动化测试不能替代真实视频验证；发布前应分别在 Mac Chrome／Edge 和 Safari 中检查有字幕视频、无字幕视频、登录要求、分 P 切换、语言切换、阅读跳转及三种格式下载。
 
 ## 项目结构
 
