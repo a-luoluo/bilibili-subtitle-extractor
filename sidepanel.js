@@ -531,6 +531,5 @@ function disposeView(){
   viewDisposed=true;detectSeq++;clearTimeout(autoTimer);detectController?.abort();invalidateSelection();
 }
 window.addEventListener?.('pagehide',disposeView,{once:true});
-if(isPopup)document.addEventListener?.('visibilitychange',()=>{if(document.visibilityState==='hidden')disposeView();});
 void updatePermissionButton();
 getCurrentVideo({reason:'init',force:true});

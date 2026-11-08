@@ -349,10 +349,18 @@ test('changing format updates aria-pressed and removes an older Safari save link
   assert.equal(h.run('selectedFormat'),'json');assert.equal(h.formats[2].attributes['aria-pressed'],'true');
   assert.equal(h.formats[0].attributes['aria-pressed'],'false');assert.equal(h.getElement('downloadLink').hidden,true);
 });
-test('Safari hidden popup cancels its selection',()=>{
-  const h=harness({safari:true,popup:true});h.setSelection();const selected=h.context.getSelection();
-  h.context.document.visibilityState='hidden';h.events.visibilitychange();
-  assert.equal(h.context.isCurrentSelection(selected),false);
+test('Safari temporary visibility changes do not dispose an active permission request',async()=>{
+  const permission=deferred();
+  const h=harness({safari:true,popup:true,permissions:{contains:async()=>false,request:()=>permission.promise}});
+  h.setSelection();const selected=h.context.getSelection();await new Promise(setImmediate);
+  let retries=0;h.context.getCurrentVideo=async()=>{retries++;};
+  const work=h.getElement('grantAccessBtn').listeners.click();
+  h.context.document.visibilityState='hidden';h.events.visibilitychange?.();
+  h.context.document.visibilityState='visible';h.events.visibilitychange?.();
+  assert.equal(h.context.isCurrentSelection(selected),true);assert.equal(h.run('viewDisposed'),false);
+  permission.resolve(true);await work;
+  assert.equal(retries,1);assert.equal(h.getElement('grantAccessBtn').disabled,false);
+  assert.equal(h.getElement('grantAccessBtn').hidden,true);
 });
 test('Safari requests only its declared websites synchronously, then retries after a grant',async()=>{
   const calls=[],permission=deferred();
