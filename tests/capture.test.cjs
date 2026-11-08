@@ -26,7 +26,7 @@ function bus() {
   };
 }
 
-function harness({ fetch, state, playinfo, main = true } = {}) {
+function harness({ fetch, state, playinfo, main = true, browserNamespace = false } = {}) {
   let messageHandler;
   let now = 0;
   class Clock extends Date { static now() { return now; } }
@@ -49,7 +49,7 @@ function harness({ fetch, state, playinfo, main = true } = {}) {
   const window = Object.assign(bus(), { fetch: fetch || (() => Promise.reject(new Error('unexpected request'))), __INITIAL_STATE__: state, __playinfo__: playinfo });
   const document = Object.assign(bus(), { readyState: 'loading' });
   const location = new URL(`https://www.bilibili.com/video/${BV}/`);
-  const context = vm.createContext({ window, document, location, URL, Date: Clock, CustomEvent: Event, XMLHttpRequest: XHR, chrome: { runtime: { onMessage: { addListener(fn) { messageHandler = fn; } } } } });
+  const context = vm.createContext({ window, document, location, URL, Date: Clock, CustomEvent: Event, XMLHttpRequest: XHR, [browserNamespace ? 'browser' : 'chrome']: { runtime: { onMessage: { addListener(fn) { messageHandler = fn; } } } } });
   vm.runInContext(fs.readFileSync(path.join(root, 'capture.js'), 'utf8'), context);
   if (main) vm.runInContext(fs.readFileSync(path.join(root, 'capture-main.js'), 'utf8'), context);
   return {
@@ -73,6 +73,13 @@ function response(data, options = {}) {
 function captured(cid, overrides = {}) {
   return { bvid: BV, cid: String(cid), url: API(cid), raw: [TRACK], source: 'fetch', ...overrides };
 }
+
+test('isolated bridge also works when only the Safari browser namespace exists', () => {
+  const h = harness({ browserNamespace: true, main: false });
+  h.emit(captured(123));
+  assert.equal(h.get(123).raw.length, 1);
+  assert.equal(h.get(123).raw[0].lan, 'zh-CN');
+});
 
 test('fetch keeps original promise/response and captures only the exact BV and CID', async () => {
   const data = { code: 0, data: { subtitle: { subtitles: [TRACK] } } };

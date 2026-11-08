@@ -1,10 +1,10 @@
 # 在 Mac 上安装 B站字幕提取器
 
-适用：Chrome 116 或更新版本、支持侧栏 API 的当前稳定版 Microsoft Edge。Intel 与 Apple Silicon Mac 使用同一个 ZIP 包，不需要 Rosetta。Safari 暂不支持。
+适用：Chrome 116 或更新版本、支持侧栏 API 的当前稳定版 Microsoft Edge。Intel 与 Apple Silicon Mac 使用同一个 ZIP 包，不需要 Rosetta。Safari 使用独立包与安装流程，见 [INSTALL-SAFARI.md](INSTALL-SAFARI.md)。
 
 ## 首次安装
 
-1. 双击 `bilibili-subtitle-extractor-6.6.0.zip` 解压。
+1. 双击 `bilibili-subtitle-extractor-6.7.0.zip` 解压。
 2. 把解压后的文件夹放在准备长期保留的位置，例如「文稿」。
 3. 在 Chrome 地址栏输入 `chrome://extensions/`；Edge 输入 `edge://extensions/`。
 4. 打开「开发者模式」，选择「加载已解压的扩展程序」。

@@ -1,4 +1,4 @@
-name: Check and package extension
+name: Check and package extensions
 
 on:
   push:
@@ -16,28 +16,77 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Check extension resources and JavaScript
+      - name: Read package version
+        id: version
+        run: node -e "require('fs').appendFileSync(process.env.GITHUB_OUTPUT, 'version=' + require('./package.json').version + '\n')"
+      - name: Check Chrome and Safari resources and JavaScript
         run: npm run check
       - name: Run regression tests
         run: npm test
-      - name: Build extension ZIP
+      - name: Build both extension source ZIPs
         run: npm run package
-      - name: Verify ZIP with Python standard library
+      - name: Independently verify both ZIP manifests and contents
         run: |
           python3 - <<'PY'
           from pathlib import Path
           import json
           import zipfile
-          for path in Path('dist').glob('*.zip'):
-              with zipfile.ZipFile(path) as archive:
+          version = json.loads(Path('package.json').read_text())['version']
+          for browser, filename in (
+              ('chrome', f'bilibili-subtitle-extractor-{version}.zip'),
+              ('safari', f'bilibili-subtitle-extractor-safari-{version}.zip'),
+          ):
+              with zipfile.ZipFile(Path('dist') / filename) as archive:
                   assert archive.testzip() is None
                   manifest = json.loads(archive.read('manifest.json'))
-                  assert manifest['version'] == json.loads(Path('package.json').read_text())['version']
+                  assert manifest['version'] == version
                   assert 'capture-main.js' in archive.namelist()
+                  assert 'capture.js' in archive.namelist()
                   assert not any(name.startswith(('.git/', 'tests/')) for name in archive.namelist())
+                  if browser == 'safari':
+                      assert manifest['action']['default_popup'] == 'sidepanel.html?popup=1'
+                      assert 'sidePanel' not in manifest['permissions']
+                      assert 'downloads' not in manifest['permissions']
+                      assert all(key not in manifest for key in ('side_panel', 'background', 'minimum_chrome_version'))
+                      assert 'background.js' not in archive.namelist()
+                  else:
+                      assert 'sidePanel' in manifest['permissions']
+                      assert 'background.js' in archive.namelist()
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: bilibili-subtitle-extractor
-          path: dist/*.zip
+          name: chrome-edge-extension
+          path: dist/bilibili-subtitle-extractor-${{ steps.version.outputs.version }}.zip
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: safari-extension-source
+          path: dist/bilibili-subtitle-extractor-safari-${{ steps.version.outputs.version }}.zip
+          if-no-files-found: error
+
+  safari-development-app:
+    needs: check
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build Safari extension source
+        run: npm run package
+      - name: Compile unsigned Safari development app using Xcode
+        run: npm run package:safari-app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: safari-unsigned-development-app
+          path: |
+            dist/*-safari-development.app.zip
+            dist/*-safari-development.app.zip.sha256
+          if-no-files-found: error
+      - name: Upload Safari build report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: safari-development-build-report
+          path: dist/safari-build/build-report.json
+          if-no-files-found: ignore

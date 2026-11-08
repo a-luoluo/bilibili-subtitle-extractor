@@ -1,10 +1,15 @@
 // Every asynchronous result belongs to one tab, video, part and subtitle selection.
+const extensionApi=globalThis.browser||globalThis.chrome;
+const isPopup=new URLSearchParams(globalThis.location?.search||'').get('popup')==='1';
+if(isPopup)document.documentElement?.classList.add('popup');
 let videoData=null,subtitles=[],selectedSub=null,selectedFormat='srt';
 let allPages=[],allBody=[];
 let detectSeq=0,selectionSeq=0,autoTimer=null;
 let detectController=null,bodyController=null,bodyPromise=null,readerSelection=null;
+let popupTarget=null,viewDisposed=false,preparedDownload=null;
 const MANUAL_DETECT_DELAYS=[0,700,1500,3000];
 const REQUEST_TIMEOUT=8000;
+const WEBSITE_ORIGINS=['https://*.bilibili.com/*','https://*.hdslb.com/*'];
 const $=id=>document.getElementById(id);
 const statusEl=$('status'),videoInfoEl=$('videoInfo');
 const subListEl=$('subList'),subCard=$('subCard');
@@ -13,6 +18,31 @@ const previewEl=$('preview'),previewLabel=$('previewLabel'),debugEl=$('debug');
 const pageCard=$('pageCard'),pageListEl=$('pageList');
 const readerEl=$('reader'),readerContent=$('readerContent'),readerBack=$('readerBack');
 const mainUI=$('mainUI');
+const downloadLink=$('downloadLink');
+const grantAccessBtn=$('grantAccessBtn');
+
+async function updatePermissionButton(){
+  if(!grantAccessBtn)return;
+  if(!isPopup||typeof extensionApi.permissions?.request!=='function'){grantAccessBtn.hidden=true;return;}
+  let granted=false;
+  try{granted=await extensionApi.permissions.contains({origins:WEBSITE_ORIGINS});}
+  catch{/* Let the user request access if Safari cannot report the current grant. */}
+  if(!viewDisposed)grantAccessBtn.hidden=granted;
+}
+async function requestWebsiteAccess(){
+  if(viewDisposed||!isPopup||typeof extensionApi.permissions?.request!=='function')return;
+  grantAccessBtn.disabled=true;
+  try{
+    // Call directly in the click stack; Safari requires a user gesture.
+    const permissionRequest=extensionApi.permissions.request({origins:WEBSITE_ORIGINS});
+    const granted=await permissionRequest;
+    if(viewDisposed)return;
+    grantAccessBtn.hidden=granted;
+    if(granted)await getCurrentVideo({reason:'website-access-granted'});
+    else showStatus('尚未允许网站访问。需要允许访问 B站和字幕网站后才能提取；可再次点击“允许网站访问”。','info');
+  }catch(error){if(!viewDisposed)showStatus('未能取得网站访问权限：'+error.message,'error');}
+  finally{if(!viewDisposed)grantAccessBtn.disabled=false;}
+}
 
 function log(message,seq=detectSeq){
   if(!isCurrentRun(seq))return;
@@ -22,6 +52,7 @@ function log(message,seq=detectSeq){
 function invalidateSelection(){
   selectionSeq++;bodyController?.abort();
   bodyController=null;bodyPromise=null;allBody=[];readerSelection=null;
+  clearPreparedDownload();
 }
 function resetUI(){
   invalidateSelection();videoData=null;subtitles=[];selectedSub=null;allPages=[];
@@ -45,14 +76,20 @@ function parseVideoUrl(value){
   }catch{return null;}
 }
 function makeKey(tab,info){return `${tab?.id??'no-tab'}:${info?.bvid||'no-bv'}:${info?.p||1}`;}
-function isCurrentRun(seq){return seq===detectSeq;}
-async function getActiveTab(){const [tab]=await chrome.tabs.query({active:true,currentWindow:true});return tab;}
+function isCurrentRun(seq){return !viewDisposed&&seq===detectSeq;}
+async function getActiveTab(){
+  const query=popupTarget?{active:true,windowId:popupTarget.windowId}:{active:true,currentWindow:true};
+  const [tab]=await extensionApi.tabs.query(query);
+  // A popup is attached to the page that opened it, never a newly-created extension tab.
+  return popupTarget&&tab?.id!==popupTarget.tabId?undefined:tab;
+}
 async function isStillSameVideo(seq,key){
   if(!isCurrentRun(seq))return false;
   try{const tab=await getActiveTab();return isCurrentRun(seq)&&makeKey(tab,parseVideoUrl(tab?.url))===key;}
   catch{return false;}
 }
 function scheduleAutoDetect(reason){
+  if(viewDisposed)return;
   // Invalidate immediately; old actions must not remain usable during debounce.
   clearTimeout(autoTimer);detectSeq++;detectController?.abort();resetUI();
   autoTimer=setTimeout(()=>getCurrentVideo({reason}),250);
@@ -96,7 +133,7 @@ async function fetchJSON(url,{signal,subtitle=false}={}){
   }catch(error){
     if(signal?.aborted)throw abortError();
     if(timedOut)throw new Error('请求超时，请检查网络后重试');
-    if(error instanceof TypeError)throw new Error('网络连接失败，请检查网络或网站访问权限');
+    if(error instanceof TypeError)throw new Error('网络连接失败，请检查网络，并在扩展设置中允许网站访问');
     throw error;
   }finally{clearTimeout(timer);signal?.removeEventListener('abort',cancel);}
 }
@@ -116,7 +153,7 @@ function mergeResults(a,b){
 }
 async function getPageState(tabId){
   try{
-    const [result]=await chrome.scripting.executeScript({target:{tabId},world:'MAIN',func:()=>{
+    const [result]=await extensionApi.scripting.executeScript({target:{tabId},world:'MAIN',func:()=>{
       const v=window.__INITIAL_STATE__?.videoData||{};
       return{cid:v.cid||0,aid:v.aid||0,bvid:v.bvid||v.bv_id||'',title:v.title||''};
     }});
@@ -126,13 +163,13 @@ async function getPageState(tabId){
 async function getPlayerSubtitlesFromPage(tabId,vd,seq=detectSeq){
   const result=emptyResult();
   try{
-    const captured=await chrome.tabs.sendMessage(tabId,{action:'bse:getCapturedSubtitles',bvid:vd.bvid,cid:vd.cid});
+    const captured=await extensionApi.tabs.sendMessage(tabId,{action:'bse:getCapturedSubtitles',bvid:vd.bvid,cid:vd.cid});
     result.raw=normalizeSubtitles(captured?.raw);
     if(result.raw.length)return{...result,source:'capture',available:true};
   }catch{/* Already-open pages may not have a content-script bridge yet. */}
   if(!isCurrentRun(seq))return result;
   try{
-    const [response]=await chrome.scripting.executeScript({
+    const [response]=await extensionApi.scripting.executeScript({
       target:{tabId},world:'MAIN',args:[vd.bvid,vd.cid,vd.aid,REQUEST_TIMEOUT],
       func:async(bvid,cid,aid,timeout)=>{
         // Runs in the page: do not close over sidebar variables.
@@ -260,6 +297,7 @@ async function fetchSubtitlesWithRetry(tabId,vd,seq,key,signal){
   return result;
 }
 async function getCurrentVideo(options={}){
+  if(viewDisposed)return;
   clearTimeout(autoTimer);
   const seq=++detectSeq;
   detectController?.abort();detectController=new AbortController();
@@ -269,7 +307,8 @@ async function getCurrentVideo(options={}){
     const tab=await getActiveTab();
     if(!isCurrentRun(seq))return;
     const info=parseVideoUrl(tab?.url);
-    if(!info){videoInfoEl.textContent='尚未选择 B站视频';showStatus('请打开含 BV 号的 B站视频页面','error');return;}
+    if(!info){videoInfoEl.textContent='尚未选择 B站视频';showStatus('请打开含 BV 号的 B站视频页面，并允许扩展访问该网站','error');return;}
+    if(isPopup&&!popupTarget)popupTarget={tabId:tab.id,windowId:tab.windowId};
     const key=makeKey(tab,info);
     log(info.bvid+' · P'+info.p+' · '+(options.reason||'manual'),seq);
     const vd=await resolveVideoData(tab,info,seq,signal);
@@ -280,7 +319,7 @@ async function getCurrentVideo(options={}){
     if(!result||!await isStillSameVideo(seq,key))return;
     if(result.raw.length){render(result.raw);return;}
     if(result.needLogin)showStatus('该视频字幕需要登录。请在 B站登录并确认播放器能显示字幕，再点“重新检测”。','error');
-    else if(!result.available)showStatus('字幕请求失败，请检查网络或刷新 B站页面后重试。','error');
+    else if(!result.available)showStatus('字幕请求失败，请检查网络，并在扩展设置中允许访问 B站和字幕网站后重试。','error');
     else showStatus('未检测到可提取字幕。请确认播放器已提供 CC / AI 字幕，再重新检测。','info');
   }catch(error){
     if(isCurrentRun(seq)&&error.name!=='AbortError'){
@@ -307,7 +346,8 @@ function getSelection(){
   return{run:detectSeq,selection:selectionSeq,video:videoData,subtitle:subtitles[selectedSub]};
 }
 function isCurrentSelection(value){
-  return !!value&&isCurrentRun(value.run)&&value.selection===selectionSeq&&value.video===videoData&&value.subtitle===subtitles[selectedSub];
+  return !!value&&isCurrentRun(value.run)&&value.selection===selectionSeq&&value.video===videoData&&value.subtitle===subtitles[selectedSub]&&
+    (!isPopup||(popupTarget&&value.video.tabId===popupTarget.tabId&&value.video.windowId===popupTarget.windowId));
 }
 async function isSelectionVisible(value){return isCurrentSelection(value)&&await isStillSameVideo(value.run,value.video.key)&&isCurrentSelection(value);}
 async function selectIdx(idx){
@@ -353,21 +393,59 @@ async function loadPreview(){
     showFullPreview(items,3);
   }catch(error){if(isCurrentSelection(selection)&&error.name!=='AbortError')previewEl.textContent='加载失败：'+error.message;}
 }
+function clearPreparedDownload(){
+  if(preparedDownload){
+    const previous=preparedDownload;
+    if(previous.clicked)setTimeout(()=>URL.revokeObjectURL(previous.url),60000);
+    else URL.revokeObjectURL(previous.url);
+    preparedDownload=null;
+  }
+  if(downloadLink){downloadLink.hidden=true;downloadLink.removeAttribute('href');downloadLink.removeAttribute('download');}
+}
+function makeExport(selection,format,items){
+  if(!['srt','txt','json'].includes(format))throw new Error('不支持的导出格式');
+  const text=format==='srt'?toSRT(items):format==='txt'?toTXT(items):JSON.stringify(items,null,2);
+  const filename=safe(selection.video.title,190)+' - '+safe(selection.subtitle.key||selection.subtitle.lang,40)+'.'+format;
+  const mime=format==='json'?'application/json':format==='srt'?'application/x-subrip':'text/plain';
+  const blob=new Blob([format==='json'?text:'\uFEFF'+text],{type:mime+';charset=utf-8'});
+  return{url:URL.createObjectURL(blob),filename,mime,count:items.length,selection,format,clicked:false};
+}
+function prepareBrowserDownload(selection,format,items){
+  if(!downloadLink)throw new Error('下载链接不可用，请重新打开扩展');
+  clearPreparedDownload();
+  preparedDownload=makeExport(selection,format,items);
+  downloadLink.href=preparedDownload.url;downloadLink.download=preparedDownload.filename;
+  downloadLink.type=preparedDownload.mime;downloadLink.textContent='保存 '+preparedDownload.filename;
+  downloadLink.hidden=false;
+}
 async function download(){
   const selection=getSelection(),format=selectedFormat;
   if(!selection||selection.subtitle.isMusic)return;
+  const nativeDownloads=typeof extensionApi.downloads?.download==='function';
+  // Safari's download link must run in the original click call stack. Even an
+  // already-resolved Promise would unnecessarily leave that user gesture.
+  if(!nativeDownloads&&allBody.length){
+    if(!isCurrentSelection(selection))return;
+    try{prepareBrowserDownload(selection,format,allBody);downloadLink.click();showFullPreview(allBody,20);}
+    catch(error){showStatus('未完成保存：'+error.message,'error');}
+    return;
+  }
+  clearPreparedDownload();
   extractBtn.disabled=true;showStatus('正在准备下载…','info');let objectUrl='';
   try{
     const items=await getSubtitleBody(selection);
     if(!await isSelectionVisible(selection))return;
-    const text=format==='srt'?toSRT(items):format==='txt'?toTXT(items):JSON.stringify(items,null,2);
-    const filename=safe(selection.video.title,190)+' - '+safe(selection.subtitle.key||selection.subtitle.lang,40)+'.'+format;
-    const mime=format==='json'?'application/json':format==='srt'?'application/x-subrip':'text/plain';
-    const blob=new Blob([format==='json'?text:'\uFEFF'+text],{type:mime+';charset=utf-8'});
-    objectUrl=URL.createObjectURL(blob);
-    await chrome.downloads.download({url:objectUrl,filename});
+    if(!nativeDownloads){
+      if(format!==selectedFormat)return;
+      prepareBrowserDownload(selection,format,items);
+      showStatus('字幕已准备好，请点击保存链接完成下载。','info');
+      return;
+    }
+    const output=makeExport(selection,format,items);
+    objectUrl=output.url;
+    await extensionApi.downloads.download({url:objectUrl,filename:output.filename});
     const savedUrl=objectUrl;setTimeout(()=>URL.revokeObjectURL(savedUrl),60000);objectUrl='';
-    if(isCurrentSelection(selection)){showFullPreview(items,20);showStatus('已开始保存：'+filename+'（'+items.length+' 条）','success');}
+    if(isCurrentSelection(selection)){showFullPreview(items,20);showStatus('已开始保存：'+output.filename+'（'+items.length+' 条）','success');}
   }catch(error){if(isCurrentSelection(selection)&&error.name!=='AbortError')showStatus('未完成保存：'+error.message,'error');}
   finally{if(objectUrl)URL.revokeObjectURL(objectUrl);if(isCurrentSelection(selection))extractBtn.disabled=false;}
 }
@@ -388,7 +466,7 @@ function closeRead(){readerSelection=null;readerEl.style.display='none';mainUI.s
 async function seek(time,selection=readerSelection){
   if(!Number.isFinite(time)||time<0||!selection||!await isSelectionVisible(selection))return;
   try{
-    const [result]=await chrome.scripting.executeScript({target:{tabId:selection.video.tabId},args:[time,selection.video.bvid,selection.video.page],func:(seconds,bvid,page)=>{
+    const [result]=await extensionApi.scripting.executeScript({target:{tabId:selection.video.tabId},args:[time,selection.video.bvid,selection.video.page],func:(seconds,bvid,page)=>{
       const url=new URL(location.href),match=url.pathname.match(/^\/video\/(BV[a-zA-Z0-9]{10})\/?$/);
       if(match?.[1]!==bvid||Number(url.searchParams.get('p')||1)!==page)return false;
       const video=document.querySelector('video');if(!video)return false;
@@ -424,17 +502,35 @@ function showFullPreview(body,limit=3){
 function showStatus(message,type='info'){statusEl.textContent=message;statusEl.className='status '+type;}
 function hideStatus(){statusEl.className='status';statusEl.textContent='';}
 $('refreshBtn').addEventListener('click',()=>getCurrentVideo({reason:'manual'}));
+grantAccessBtn?.addEventListener('click',requestWebsiteAccess);
 extractBtn.addEventListener('click',download);readBtn.addEventListener('click',read);readerBack.addEventListener('click',closeRead);
 document.querySelectorAll('.format-btn').forEach(button=>button.addEventListener('click',()=>{
-  document.querySelectorAll('.format-btn').forEach(other=>other.classList.remove('active'));
-  button.classList.add('active');selectedFormat=button.dataset.format;
+  document.querySelectorAll('.format-btn').forEach(other=>{other.classList.remove('active');other.setAttribute('aria-pressed','false');});
+  button.classList.add('active');button.setAttribute('aria-pressed','true');selectedFormat=button.dataset.format;
+  clearPreparedDownload();
 }));
-chrome.tabs.onActivated.addListener(info=>{
-  if(videoData&&info.windowId!==videoData.windowId)return;
+downloadLink?.addEventListener('click',event=>{
+  if(!preparedDownload||!isCurrentSelection(preparedDownload.selection)||preparedDownload.format!==selectedFormat){
+    event.preventDefault();clearPreparedDownload();return;
+  }
+  preparedDownload.clicked=true;
+  showStatus('已请求保存：'+preparedDownload.filename+'（'+preparedDownload.count+' 条）','success');
+});
+extensionApi.tabs.onActivated.addListener(info=>{
+  const windowId=popupTarget?.windowId??videoData?.windowId;
+  if(windowId!=null&&info.windowId!==windowId)return;
   scheduleAutoDetect('tab-activated');
 });
-chrome.tabs.onUpdated.addListener((tabId,changeInfo,tab)=>{
-  if(!tab.active||(videoData&&tab.windowId!==videoData.windowId))return;
+extensionApi.tabs.onUpdated.addListener((tabId,changeInfo,tab)=>{
+  const windowId=popupTarget?.windowId??videoData?.windowId;
+  if(!tab.active||(windowId!=null&&tab.windowId!==windowId))return;
   if(changeInfo.url||changeInfo.status==='loading'||changeInfo.status==='complete')scheduleAutoDetect('page-updated');
 });
+function disposeView(){
+  if(viewDisposed)return;
+  viewDisposed=true;detectSeq++;clearTimeout(autoTimer);detectController?.abort();invalidateSelection();
+}
+window.addEventListener?.('pagehide',disposeView,{once:true});
+if(isPopup)document.addEventListener?.('visibilitychange',()=>{if(document.visibilityState==='hidden')disposeView();});
+void updatePermissionButton();
 getCurrentVideo({reason:'init',force:true});

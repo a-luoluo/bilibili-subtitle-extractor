@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "B站字幕提取器",
-  "version": "6.6.0",
+  "version": "6.7.0",
   "description": "一键提取哔哩哔哩视频字幕，支持阅读模式和时间戳跳转",
   "permissions": [
     "activeTab",

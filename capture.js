@@ -1,5 +1,6 @@
 // ISOLATED world: keep the cache and extension APIs out of the page's world.
 (() => {
+  const extensionAPI = globalThis.browser || globalThis.chrome;
   const store = new Map();
   const MAX_ENTRIES = 30;
   const MAX_AGE = 10 * 60 * 1000;
@@ -62,7 +63,7 @@
     } catch (_) { /* An unrelated page event must never break the player. */ }
   });
 
-  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  extensionAPI.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (!msg || msg.action !== 'bse:getCapturedSubtitles') return false;
     prune();
     const item = validBvid(msg.bvid) && validCid(msg.cid) ? store.get(msg.bvid + ':' + msg.cid) : null;
