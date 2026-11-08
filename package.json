@@ -1,14 +1,15 @@
 {
   "name": "bilibili-subtitle-extractor",
-  "version": "6.6.0",
+  "version": "6.7.0",
   "private": true,
-  "description": "Bilibili subtitle browser extension for Chrome and Edge",
+  "description": "Bilibili subtitle browser extension for Chrome, Edge and Safari",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
     "test": "node --test tests/*.test.cjs",
     "check": "node scripts/package.mjs --check",
-    "package": "node scripts/package.mjs"
+    "package": "node scripts/package.mjs",
+    "package:safari-app": "node scripts/build-safari.mjs"
   }
 }

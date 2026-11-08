@@ -15,30 +15,47 @@ function element(){
   return{style:{},dataset:{},disabled:false,attributes:{},listeners:{},
     get innerHTML(){return html;},set innerHTML(v){html=v;text='';},get textContent(){return text;},set textContent(v){text=v;html='';},
     classList:{add:c=>classes.add(c),remove:c=>classes.delete(c),toggle:(c,on)=>on?classes.add(c):classes.delete(c),contains:c=>classes.has(c)},
-    addEventListener(name,fn){this.listeners[name]=fn;},setAttribute(k,v){this.attributes[k]=v;},querySelectorAll(){return[];}};
+    addEventListener(name,fn){this.listeners[name]=fn;},setAttribute(k,v){this.attributes[k]=v;},
+    removeAttribute(k){delete this.attributes[k];delete this[k];},querySelectorAll(){return[];}};
 }
 function harness(options={}){
-  const elements=new Map(),timers=new Map(),downloads=[],blobs=new Map(),requests=[],scriptCalls=[];
+  const elements=new Map(),timers=new Map(),downloads=[],blobs=new Map(),requests=[],scriptCalls=[],linkClicks=[],revoked=[],tabQueries=[];
   let timerId=0,blobId=0;
   const active={tab:{id:7,windowId:1,active:true,url:pageUrl()}};
-  const getElement=id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id);};
+  const formats=['srt','txt','json'].map(format=>{const el=element();el.dataset.format=format;return el;});
+  const getElement=id=>{
+    if(!elements.has(id))elements.set(id,element());
+    const el=elements.get(id);
+    if(id==='downloadLink'&&!el.click){
+      el.hidden=true;
+      el.click=()=>{
+        let prevented=false;
+        el.listeners.click?.({preventDefault(){prevented=true;}});
+        if(!prevented)linkClicks.push({url:el.href,filename:el.download,type:el.type});
+      };
+    }
+    return el;
+  };
   const events={};const event=name=>({addListener:fn=>{events[name]=fn;}});
   class TestURL extends URL{
     static createObjectURL(blob){const url='blob:test-'+(++blobId);blobs.set(url,blob);return url;}
-    static revokeObjectURL(){}
+    static revokeObjectURL(url){revoked.push(url);}
   }
   const context={URL:TestURL,URLSearchParams,AbortController,DOMException,Blob,console,Date,TypeError,
     setTimeout:(fn,ms)=>{timers.set(++timerId,{fn,ms});return timerId;},clearTimeout:id=>timers.delete(id),
-    document:{getElementById:getElement,querySelectorAll:()=>[]},
-    window:{__INITIAL_STATE__:{},__playinfo__:{}},performance:{getEntriesByType:()=>[]},
+    location:{href:'safari-web-extension://test/sidepanel.html'+(options.popup?'?popup=1':''),search:options.popup?'?popup=1':''},
+    document:{getElementById:getElement,querySelectorAll:selector=>selector==='.format-btn'?formats:[],documentElement:element(),addEventListener:(name,fn)=>{events[name]=fn;}},
+    window:{__INITIAL_STATE__:{},__playinfo__:{},addEventListener:(name,fn)=>{events[name]=fn;}},performance:{getEntriesByType:()=>[]},
     fetch:async(url,init)=>{requests.push({url,init});return options.fetch?options.fetch(url,init):response(body());},
-    chrome:{tabs:{query:async()=>[active.tab],sendMessage:async()=>({raw:[]}),onActivated:event('activated'),onUpdated:event('updated')},
+    chrome:{tabs:{query:async query=>{tabQueries.push(query);return query.windowId!=null&&query.windowId!==active.tab.windowId?[]:[active.tab];},sendMessage:async()=>({raw:[]}),onActivated:event('activated'),onUpdated:event('updated')},
       scripting:{executeScript:async args=>{scriptCalls.push(args);return[{result:await args.func(...(args.args||[]))}];}},
       downloads:{download:async value=>{downloads.push(value);return downloads.length;}}}};
+  if(options.safari){context.browser=context.chrome;delete context.chrome;delete context.browser.downloads;}
+  if(options.permissions)(context.browser||context.chrome).permissions=options.permissions;
   vm.createContext(context);vm.runInContext(source,context);
   const run=code=>vm.runInContext(code,context);
-  const setSelection=(bv=BV,p=1)=>run(`videoData={bvid:${JSON.stringify(bv)},cid:${p===1?111:222},page:${p},title:'测试视频',tabId:7,windowId:1,key:'7:${bv}:${p}',initialSubtitles:[]}; subtitles=[{key:'zh',lang:'中文',url:'https://aisubtitle.hdslb.com/zh.json',isMusic:false},{key:'en',lang:'English',url:'https://aisubtitle.hdslb.com/en.json',isMusic:false}];selectedSub=0;`);
-  return{context,run,setSelection,active,elements,getElement,timers,events,downloads,blobs,requests,scriptCalls};
+  const setSelection=(bv=BV,p=1)=>run(`videoData={bvid:${JSON.stringify(bv)},cid:${p===1?111:222},page:${p},title:'测试视频',tabId:7,windowId:1,key:'7:${bv}:${p}',initialSubtitles:[]}; subtitles=[{key:'zh',lang:'中文',url:'https://aisubtitle.hdslb.com/zh.json',isMusic:false},{key:'en',lang:'English',url:'https://aisubtitle.hdslb.com/en.json',isMusic:false}];selectedSub=0;${options.popup?'popupTarget={tabId:7,windowId:1};':''}`);
+  return{context,run,setSelection,active,elements,getElement,timers,events,downloads,blobs,requests,scriptCalls,linkClicks,revoked,tabQueries,formats};
 }
 
 // Formatting and external data validation protect all three export paths.
@@ -247,4 +264,121 @@ test('activating a tab in another window preserves this window reader and select
   assert.equal(h.context.isCurrentSelection(original),true);
   assert.equal(h.getElement('reader').style.display,'flex');
   assert.equal(h.timers.size,0);
+});
+
+// Safari has browser.* promises and a popup, without the Chromium downloads API.
+test('Safari browser-only popup detects its source page and previews captions',async()=>{
+  const h=harness({safari:true,popup:true,fetch:async url=>response(url.includes('web-interface/view')?
+    {code:0,data:{bvid:BV,cid:111,title:'Safari视频',pages:[{page:1,cid:111}]}}:body('Safari正文'))});
+  h.context.browser.tabs.sendMessage=async()=>({raw:[track()]});
+  await h.context.getCurrentVideo();await new Promise(setImmediate);
+  assert.equal('chrome' in h.context,false);assert.equal('downloads' in h.context.browser,false);
+  assert.equal(h.context.document.documentElement.classList.contains('popup'),true);
+  assert.equal(h.run('popupTarget.tabId'),7);assert.equal(h.run('popupTarget.windowId'),1);
+  assert.match(h.getElement('preview').innerHTML,/Safari正文/);
+  assert.ok(h.tabQueries.some(query=>query.windowId===1));
+});
+test('Safari cached SRT/TXT/JSON downloads click synchronously in the user gesture',async()=>{
+  const h=harness({safari:true,popup:true});h.setSelection();await h.context.loadPreview();
+  const queryCount=h.tabQueries.length;
+  for(const [index,format] of ['srt','txt','json'].entries()){
+    h.run(`selectedFormat='${format}'`);
+    const pending=h.context.download();
+    // Assert before yielding: a later promise continuation loses Safari activation.
+    assert.equal(h.linkClicks.length,index+1);
+    await pending;
+  }
+  assert.equal(h.tabQueries.length,queryCount);assert.equal(h.requests.length,1);
+  assert.equal(h.downloads.length,0);
+  const [srt,txt,json]=h.linkClicks;
+  assert.match(srt.filename,/\.srt$/);assert.match(txt.filename,/\.txt$/);assert.match(json.filename,/\.json$/);
+  assert.equal(h.blobs.get(srt.url).type,'application/x-subrip;charset=utf-8');
+  assert.equal(h.blobs.get(txt.url).type,'text/plain;charset=utf-8');
+  assert.equal(h.blobs.get(json.url).type,'application/json;charset=utf-8');
+  assert.match(await h.blobs.get(srt.url).text(),/00:00:01,200 --> 00:00:02,500/);
+  const text=await h.blobs.get(json.url).text();assert.equal(JSON.parse(text)[0].content,'正文');assert.notEqual(text.charCodeAt(0),0xfeff);
+});
+test('Safari uncached export prepares a real link and waits for a second click',async()=>{
+  const pending=deferred();const h=harness({safari:true,popup:true,fetch:()=>pending.promise});h.setSelection();
+  const work=h.context.download();assert.equal(h.linkClicks.length,0);assert.equal(h.getElement('downloadLink').hidden,true);
+  pending.resolve(response(body('异步正文')));await work;
+  const link=h.getElement('downloadLink');
+  assert.equal(h.linkClicks.length,0);assert.equal(link.hidden,false);assert.match(link.download,/\.srt$/);
+  assert.match(h.getElement('status').textContent,/点击保存链接/);
+  link.click();assert.equal(h.linkClicks.length,1);
+  assert.match(await h.blobs.get(h.linkClicks[0].url).text(),/异步正文/);
+});
+test('Safari tab switch cancels a pending export and never binds the extension tab',async()=>{
+  const pending=deferred();const h=harness({safari:true,popup:true,fetch:()=>pending.promise});h.setSelection();
+  const work=h.context.download();
+  h.active.tab={id:90,windowId:1,active:true,url:'safari-web-extension://test/sidepanel.html?popup=1'};
+  h.events.activated({tabId:90,windowId:1});
+  pending.resolve(response(body('旧字幕')));await work;
+  assert.equal(h.linkClicks.length,0);assert.equal(h.getElement('downloadLink').hidden,true);
+  assert.equal(await h.context.getActiveTab(),undefined);
+  await h.context.getCurrentVideo();assert.equal(h.run('popupTarget.tabId'),7);
+  assert.match(h.getElement('status').textContent,/请打开/);
+});
+test('Safari prepared link is invalidated on a source-tab change',async()=>{
+  const h=harness({safari:true,popup:true});h.setSelection();await h.context.download();
+  const link=h.getElement('downloadLink'),url=link.href;assert.equal(link.hidden,false);
+  h.active.tab={id:9,windowId:1,active:true,url:pageUrl(OTHER)};h.events.activated({tabId:9,windowId:1});
+  assert.equal(link.hidden,true);assert.ok(h.revoked.includes(url));
+  link.click();assert.equal(h.linkClicks.length,0);
+});
+test('Safari closing the popup aborts pending work and prevents late UI/download updates',async()=>{
+  const pending=deferred();const h=harness({safari:true,popup:true,fetch:()=>pending.promise});h.setSelection();
+  const work=h.context.download();h.events.pagehide();
+  assert.equal(h.requests[0].init.signal.aborted,true);
+  pending.resolve(response(body('关闭后的响应')));await work;
+  assert.equal(h.getElement('downloadLink').hidden,true);assert.equal(h.linkClicks.length,0);
+  const queries=h.tabQueries.length;await h.context.getCurrentVideo();assert.equal(h.tabQueries.length,queries);
+});
+test('a newly opened Safari popup binds its own source tab instead of reusing the previous popup',async()=>{
+  const first=harness({safari:true,popup:true});first.setSelection();first.events.pagehide();
+  const second=harness({safari:true,popup:true,fetch:async()=>response({code:0,data:{bvid:OTHER,cid:333,pages:[{page:1,cid:333}]}})});
+  second.active.tab={id:21,windowId:4,active:true,url:pageUrl(OTHER)};
+  second.context.fetchSubtitlesWithRetry=async()=>({raw:[],available:true,needLogin:false,errors:[]});
+  await second.context.getCurrentVideo();
+  assert.equal(second.run('popupTarget.tabId'),21);assert.equal(second.run('popupTarget.windowId'),4);
+});
+test('changing format updates aria-pressed and removes an older Safari save link',async()=>{
+  const h=harness({safari:true,popup:true});h.setSelection();await h.context.download();
+  assert.equal(h.getElement('downloadLink').hidden,false);
+  h.formats[2].listeners.click();
+  assert.equal(h.run('selectedFormat'),'json');assert.equal(h.formats[2].attributes['aria-pressed'],'true');
+  assert.equal(h.formats[0].attributes['aria-pressed'],'false');assert.equal(h.getElement('downloadLink').hidden,true);
+});
+test('Safari temporary visibility changes do not dispose an active permission request',async()=>{
+  const permission=deferred();
+  const h=harness({safari:true,popup:true,permissions:{contains:async()=>false,request:()=>permission.promise}});
+  h.setSelection();const selected=h.context.getSelection();await new Promise(setImmediate);
+  let retries=0;h.context.getCurrentVideo=async()=>{retries++;};
+  const work=h.getElement('grantAccessBtn').listeners.click();
+  h.context.document.visibilityState='hidden';h.events.visibilitychange?.();
+  h.context.document.visibilityState='visible';h.events.visibilitychange?.();
+  assert.equal(h.context.isCurrentSelection(selected),true);assert.equal(h.run('viewDisposed'),false);
+  permission.resolve(true);await work;
+  assert.equal(retries,1);assert.equal(h.getElement('grantAccessBtn').disabled,false);
+  assert.equal(h.getElement('grantAccessBtn').hidden,true);
+});
+test('Safari requests only its declared websites synchronously, then retries after a grant',async()=>{
+  const calls=[],permission=deferred();
+  const h=harness({safari:true,popup:true,permissions:{contains:async()=>false,request:value=>{calls.push(value);return permission.promise;}}});
+  await new Promise(setImmediate);assert.equal(h.getElement('grantAccessBtn').hidden,false);
+  let retries=0;h.context.getCurrentVideo=async()=>{retries++;};
+  const work=h.getElement('grantAccessBtn').listeners.click();
+  assert.equal(calls.length,1);assert.equal(retries,0);
+  assert.deepEqual(Array.from(calls[0].origins),['https://*.bilibili.com/*','https://*.hdslb.com/*']);
+  assert.equal('permissions' in calls[0],false);
+  permission.resolve(true);await work;
+  assert.equal(retries,1);assert.equal(h.getElement('grantAccessBtn').hidden,true);assert.equal(h.getElement('grantAccessBtn').disabled,false);
+});
+test('Safari permission denial stays visible and does not retry or request in a loop',async()=>{
+  let calls=0,retries=0;
+  const h=harness({safari:true,popup:true,permissions:{contains:async()=>false,request:async()=>{calls++;return false;}}});
+  await new Promise(setImmediate);h.context.getCurrentVideo=async()=>{retries++;};
+  await h.getElement('grantAccessBtn').listeners.click();
+  assert.equal(calls,1);assert.equal(retries,0);assert.equal(h.getElement('grantAccessBtn').hidden,false);
+  assert.equal(h.getElement('grantAccessBtn').disabled,false);assert.match(h.getElement('status').textContent,/尚未允许网站访问/);
 });
