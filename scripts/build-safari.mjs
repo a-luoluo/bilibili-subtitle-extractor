@@ -12,7 +12,9 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const source = path.join(root, 'dist', 'safari-extension');
 const output = path.join(root, 'dist', 'safari-build');
 const appName = 'Bilibili Subtitle Extractor';
-const bundleIdentifier = 'io.github.aluoluo.bilibili-subtitle-extractor.dev';
+// Xcode 26.6's packager derives the host ID's last component from PRODUCT_NAME,
+// while the extension uses the supplied ID. Keep those components identical.
+const bundleIdentifier = 'io.github.aluoluo.bilibili-subtitle-extractor.dev.Bilibili-Subtitle-Extractor';
 const args = process.argv.slice(2);
 
 function run(command, arguments_, options = {}) {
@@ -112,11 +114,19 @@ async function main() {
     // Extension URLs and byte-for-byte verification require unmodified assets.
     'COMPRESS_PNG_FILES=NO', 'STRIP_PNG_TEXT=NO', 'COMBINE_HIDPI_IMAGES=NO',
     `MARKETING_VERSION=${manifest.version}`, `CURRENT_PROJECT_VERSION=${manifest.version}`];
-  console.log('Building unsigned macOS development app (arm64 + x86_64)…');
-  run('/usr/bin/xcodebuild', [...buildArgs, 'build'], { stdio: 'inherit' });
   const settings = JSON.parse(run('/usr/bin/xcodebuild', [...buildArgs, '-showBuildSettings', '-json']));
   const appSettings = settings.map(item => item.buildSettings).filter(value => value && value.WRAPPER_EXTENSION === 'app');
   assert.equal(appSettings.length, 1, `Expected one host app product; found ${appSettings.length}.`);
+  assert.equal(appSettings[0].PRODUCT_BUNDLE_IDENTIFIER, bundleIdentifier, 'The packager generated an unexpected host bundle identifier.');
+  // Some Xcode versions report only explicit scheme buildables here. The
+  // embedded extension is checked again from its final Info.plist below.
+  const extensionSettings = settings.map(item => item.buildSettings).filter(value => value && value.WRAPPER_EXTENSION === 'appex');
+  for (const extension of extensionSettings) {
+    assert(extension.PRODUCT_BUNDLE_IDENTIFIER?.startsWith(bundleIdentifier + '.'),
+      `Extension bundle identifier ${extension.PRODUCT_BUNDLE_IDENTIFIER} must be prefixed with host ${bundleIdentifier}.`);
+  }
+  console.log('Building unsigned macOS development app (arm64 + x86_64)…');
+  run('/usr/bin/xcodebuild', [...buildArgs, 'build'], { stdio: 'inherit' });
   const app = path.join(appSettings[0].TARGET_BUILD_DIR, appSettings[0].FULL_PRODUCT_NAME);
   assert(app.endsWith('.app'), 'Xcode did not report a macOS app product.');
   const appInfo = readPlist(path.join(app, 'Contents', 'Info.plist'));
@@ -129,6 +139,7 @@ async function main() {
     const extension = path.join(plugins, entry.name);
     const info = readPlist(path.join(extension, 'Contents', 'Info.plist'));
     if (info.NSExtension?.NSExtensionPointIdentifier !== 'com.apple.Safari.web-extension') continue;
+    assert(info.CFBundleIdentifier?.startsWith(appInfo.CFBundleIdentifier + '.'), 'The embedded extension bundle identifier does not match its host.');
     const binary = await verifyExecutable(extension, info);
     const resources = path.join(extension, 'Contents', 'Resources');
     for (const file of runtimeFiles) {
