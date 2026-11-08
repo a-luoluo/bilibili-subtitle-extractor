@@ -1,108 +1,102 @@
-﻿# ⚡ B站字幕提取器 — 哔哩哔哩视频字幕一键提取 / Bilibili Subtitle Extractor
+# B站字幕提取器 · Bilibili Subtitle Extractor
 
-> 一个轻量、高效的 Chrome 浏览器扩展，用于提取和下载哔哩哔哩（Bilibili / B站）视频字幕。支持 CC 字幕及 AI 生成字幕，提供阅读模式和时间戳跳转功能。
+提取哔哩哔哩视频已经提供的 CC／AI 字幕，在浏览器侧栏阅读，点击时间戳跳转，并导出 SRT、TXT 或 JSON。适用于学习笔记、视频内容回顾和字幕归档。
 
-[![Chrome Extension](https://img.shields.io/badge/Chrome-Extension-green)](https://github.com/a-luoluo/bilibili-subtitle-extractor)
-[![Manifest V3](https://img.shields.io/badge/Manifest-V3-blue)](https://github.com/a-luoluo/bilibili-subtitle-extractor)
-[![License](https://img.shields.io/badge/license-MIT-orange)](https://github.com/a-luoluo/bilibili-subtitle-extractor)
+这是浏览器扩展，**Mac 与 Windows 共用同一个安装包**。它提取视频字幕，不提取弹幕，也不会为没有字幕的视频自行进行语音识别。
 
----
+## 浏览器支持
 
-## 📖 简介 / Introduction
+| 浏览器 | 支持情况 |
+| --- | --- |
+| macOS / Windows 上的 Chrome | 116 或更新版本，建议使用当前稳定版 |
+| macOS / Windows 上的 Microsoft Edge | 使用当前稳定版，需要支持 `chrome.sidePanel.open` |
+| Safari、Firefox | 当前版本不支持 |
 
-**B站字幕提取器** 是一款专为哔哩哔哩设计的 Chrome 扩展程序，帮助用户一键提取 B 站视频中的字幕文本。无论视频使用的是 CC 字幕、AI 自动生成字幕，还是上传者手动添加的字幕，本工具都能轻松捕获并呈现。
+侧栏入口使用 [Chrome Side Panel API](https://developer.chrome.com/docs/extensions/reference/api/sidePanel)，Edge 提供[对应的侧栏 API](https://learn.microsoft.com/en-us/microsoft-edge/extensions/developer-guide/sidebar)。本项目没有独立 Mac App，也不需要安装 Rosetta。
 
-适用于：字幕下载、字幕阅读、学习笔记、翻译对照、视频内容归档、二创素材整理等场景。
+## 安装
 
-**Bilibili Subtitle Extractor** is a Chrome extension that extracts subtitles from Bilibili (B站) videos with one click. Supports CC subtitles, AI-generated subtitles, and user-uploaded subtitles — including timestamp navigation and reading mode.
+### 安装已打包的 ZIP
 
----
+1. 解压 `bilibili-subtitle-extractor-6.6.0.zip`，保留解压后的整个文件夹。不要直接选择 ZIP 文件。
+2. Chrome 打开 `chrome://extensions/`；Edge 打开 `edge://extensions/`。
+3. 开启「开发者模式」，点击「加载已解压的扩展程序」。
+4. 选择**直接包含 `manifest.json` 的文件夹**。
+5. 在浏览器扩展菜单中固定「B站字幕提取器」，然后刷新已经打开的 B 站视频页面。
 
-## ✨ 核心功能 / Features
+Mac 的详细安装与更新步骤见 [INSTALL-MAC.md](INSTALL-MAC.md)。加载后请勿删除或移动扩展文件夹，否则浏览器将找不到文件。
 
-- 🔍 **一键提取字幕** — 点击扩展图标即可抓取当前 B 站视频的全部字幕内容
-- 📖 **阅读模式** — 以纯文本方式浏览字幕，适合学习、笔记和内容回顾
-- ⏱️ **时间戳跳转** — 点击任意字幕行即可跳转到视频对应时间位置
-- 💾 **字幕下载** — 支持将字幕导出保存到本地
-- 🚀 **免登录** — 无需登录 B 站账号即可使用
-- 🧩 **Manifest V3** — 基于 Chrome 最新扩展规范开发，安全高效
+### 从源码安装
 
----
-
-## 📦 安装方法 / Installation
-
-### Chrome 浏览器
-
-1. 克隆或下载本仓库代码：
-   ```bash
-   git clone https://github.com/a-luoluo/bilibili-subtitle-extractor.git
-   ```
-2. 打开 Chrome 浏览器，地址栏输入 `chrome://extensions/`
-3. 开启右上角「**开发者模式**」
-4. 点击「**加载已解压的扩展程序**」
-5. 选择本仓库所在文件夹，完成安装
-6. 打开任意 B 站视频页面，点击工具栏中的扩展图标即可使用
-
-### Edge 浏览器
-
-与 Chrome 安装步骤完全一致（Edge 基于 Chromium）。
-
----
-
-## 🔧 技术实现 / Tech Stack
-
-| 技术 | 说明 |
-|------|------|
-| Manifest V3 | Chrome 扩展最新规范 |
-| Side Panel API | 使用侧边栏面板展示字幕内容 |
-| Content Scripts | 注入 B 站页面捕获字幕数据 |
-| Service Worker | 后台处理字幕提取逻辑 |
-| Vanilla JavaScript | 无框架依赖，极致轻量 |
-
----
-
-## 📁 项目结构
-
-```
-bilibili-subtitle-extractor/
-├── manifest.json          # 扩展配置文件
-├── background.js          # Service Worker 后台脚本
-├── content.js             # 页面注入脚本
-├── capture.js             # 字幕捕获核心逻辑
-├── floating.js            # 浮动窗口交互
-├── sidepanel.html         # 侧边栏面板界面
-├── sidepanel.js           # 侧边栏面板逻辑
-├── icons/                 # 扩展图标
-│   ├── icon16.png
-│   ├── icon48.png
-│   └── icon128.png
-└── README.md
+```sh
+git clone https://github.com/a-luoluo/bilibili-subtitle-extractor.git
 ```
 
----
+按上述步骤加载仓库根目录即可。扩展运行不需要 Node.js，也不需要安装依赖。
 
-## ❓ 常见问题 / FAQ
+## 使用
 
-**Q: 为什么有些 B 站视频提取不到字幕？**
+1. 在 B 站打开含 BV 号的视频页面并等待播放器加载。
+2. 点击浏览器工具栏中的扩展图标，打开侧栏。
+3. 检测到字幕后选择语言。若未出现，先在播放器中打开字幕，再点击「重新检测」。
+4. 点击「开始阅读」查看全文，点击字幕时间戳跳转当前视频。
+5. 选择 SRT、TXT 或 JSON，然后点击「下载」。文件保存位置由浏览器下载设置决定。
+6. 在 B 站播放器中切换视频或分 P 后，扩展会重新检测。
 
-A: 部分视频可能没有 CC 字幕或 AI 字幕。本扩展依赖 B 站页面中实际存在的字幕数据，若视频本身无字幕则无法提取。
+**部分字幕需要登录 B 站。** 扩展沿用当前浏览器中的 B 站登录状态，不要求提供密码。没有登录时能够提取的字幕取决于 B 站接口与视频权限，不能保证所有视频免登录可用。
 
-**Q: 支持哪些类型的字幕？**
+## 常见问题
 
-A: 支持 CC 字幕（Closed Caption）、AI 自动生成字幕，以及上传者手动添加的字幕。
+**没有检测到字幕怎么办？**
 
-**Q: 会收集用户数据吗？**
+确认视频在播放器里有可选字幕；必要时登录 B 站，打开播放器字幕并刷新页面，再重新检测。没有提供字幕、接口失败、网络异常和登录要求是不同情况，可根据侧栏提示处理。扩展无法提取烧录在画面中的文字。
 
-A: 不会。本扩展仅在本地浏览器中运行，不向任何服务器发送数据。
+**切换分 P 后内容不对怎么办？**
 
----
+先等待新分 P 的播放器加载完成，再点击「重新检测」。如果仍然出现问题，请在 Issue 中提供视频 BV 号、分 P、浏览器版本和侧栏错误提示，不要上传 Cookie 或登录凭据。
 
-## 📄 许可证 / License
+**为什么 Safari 无法安装？**
 
-MIT © a-luoluo
+此版本依赖 Chromium 扩展的侧栏和脚本 API；Safari 需要单独适配，不能直接加载本安装包。
 
----
+**会上传字幕或收集账号信息吗？**
 
-## ⭐ 如果觉得好用，请给个 Star！
+扩展会请求 B 站的视频／字幕接口及字幕 CDN，登录相关请求可能带上浏览器已有的 B 站登录状态。字幕在本地侧栏显示或下载到本地；代码没有独立的上传服务、分析统计或账号密码采集功能。
 
-欢迎 Fork 和改进，也欢迎提交 Issue 和 PR。
+## 开发与打包
+
+开发工具需要 Node.js 20 或更新版本；无 npm 依赖，不需要执行 `npm install`。
+
+```sh
+npm run check
+npm test
+npm run package
+```
+
+- `check`：检查运行脚本语法、版本号、manifest 引用和 ZIP 文件目录／内容。
+- `test`：运行 Node.js 行为回归测试；测试不依赖真实 B 站账号。
+- `package`：生成 `dist/bilibili-subtitle-extractor-6.6.0.zip`。
+
+打包只包含扩展运行文件、图标与使用文档。文件顺序、时间戳和权限固定，同一份源码产生相同的 ZIP；测试、Git 数据及未使用的旧浮窗代码不进入安装包。
+
+GitHub Actions 会运行检查和测试并提供 ZIP 构建产物，不会自动创建 Release。自动化测试不能替代真实视频验证；发布前应在 Mac Chrome／Edge 中检查有字幕视频、无字幕视频、登录要求、分 P 切换、语言切换、阅读跳转及三种格式下载。
+
+## 项目结构
+
+```text
+manifest.json           扩展配置
+background.js           侧栏入口
+capture-main.js         播放器页面中的字幕捕获
+capture.js              隔离环境中的字幕缓存与通信
+sidepanel.html          侧栏界面
+sidepanel.js            检测、阅读、跳转与导出
+icons/                  扩展图标
+scripts/package.mjs     检查与可复现打包
+tests/                  行为回归测试
+```
+
+更新内容见 [CHANGELOG.md](CHANGELOG.md)。
+
+## 许可证
+
+原项目 README 标注：MIT © a-luoluo。仓库目前未附独立 LICENSE 文件。

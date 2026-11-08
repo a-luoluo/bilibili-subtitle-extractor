@@ -1,0 +1,43 @@
+name: Check and package extension
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check extension resources and JavaScript
+        run: npm run check
+      - name: Run regression tests
+        run: npm test
+      - name: Build extension ZIP
+        run: npm run package
+      - name: Verify ZIP with Python standard library
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          import zipfile
+          for path in Path('dist').glob('*.zip'):
+              with zipfile.ZipFile(path) as archive:
+                  assert archive.testzip() is None
+                  manifest = json.loads(archive.read('manifest.json'))
+                  assert manifest['version'] == json.loads(Path('package.json').read_text())['version']
+                  assert 'capture-main.js' in archive.namelist()
+                  assert not any(name.startswith(('.git/', 'tests/')) for name in archive.namelist())
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bilibili-subtitle-extractor
+          path: dist/*.zip
+          if-no-files-found: error
